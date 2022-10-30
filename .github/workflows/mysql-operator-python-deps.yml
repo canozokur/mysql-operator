@@ -2,7 +2,7 @@ name: Build mysql-operator-python-deps container image
 on:
   workflow_dispatch:
   push:
-    branches: ['trunk']
+    branches: ['canozokur/arm64-build']
     paths: ['docker-deps/*']
 jobs:
   build:
