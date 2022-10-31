@@ -1,8 +1,11 @@
 name: Build mysql-operator container image
 on:
   workflow_dispatch:
-  release:
-    types: ['published']
+    inputs:
+      tag:
+        description: >
+          The branch, tag or SHA to checkout and build.
+        required: true
 jobs:
   build:
     runs-on: self-hosted
@@ -14,7 +17,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ inputs.tag }}
 
       - name: Set up docker context for buildx
         run: |
