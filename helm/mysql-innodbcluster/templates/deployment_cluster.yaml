@@ -31,6 +31,11 @@ spec:
   {{- end }}
     tlsSecretName: {{ $secret_name }}
 {{- end }}
+{{- with .Values.router }}
+  {{- if .podSpec }}
+    podSpec: {{ toYaml .podSpec | nindent 6 }}
+  {{- end }}
+{{- end }}
   secretName: {{ .Release.Name }}-cluster-secret
   imagePullPolicy : {{ required "image.pullPolicy is required" .Values.image.pullPolicy }}
   baseServerId: {{ required "baseServerId is required" .Values.baseServerId }}
