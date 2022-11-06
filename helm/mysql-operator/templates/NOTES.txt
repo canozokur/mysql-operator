@@ -4,8 +4,8 @@ Create an MySQL InnoDB Cluster by executing:
 2.1 With self signed certificates
     export NAMESPACE="your-namespace"
     # in case the namespace doesn't exist, please pass --create-namespace
-    helm install my-mysql-innodbcluster mysql-operator/mysql-innodbcluster -n $NAMESPACE \
-        --version 2.0.7 \
+    helm install my-mysql-innodbcluster mysql-operator-arm64/mysql-innodbcluster -n $NAMESPACE \
+        --version 0.0.2 \
         --set credentials.root.password=">-0URS4F3P4SS" \
         --set tls.useSelfSigned=true
 
@@ -35,8 +35,8 @@ Create an MySQL InnoDB Cluster by executing:
             --cert=$CERT_PATH/router-cert.pem --key=$CERT_PATH/router-key.pem \
         | kubectl apply -f -
 
-        helm install my-mysql-innodbcluster mysql-operator/mysql-innodbcluster -n $NAMESPACE \
-        --version 2.0.7 \
+        helm install my-mysql-innodbcluster mysql-operator-arm64/mysql-innodbcluster -n $NAMESPACE \
+        --version 0.0.2 \
         --set credentials.root.password=">-0URS4F3P4SS" \
         --set tls.useSelfSigned=false \
         --set tls.caSecretName=$CA_SECRET \
