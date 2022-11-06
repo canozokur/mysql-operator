@@ -9,29 +9,28 @@ Upstream repo doesn't provide their "python-deps" docker image either. This repo
 
 ## How to use the images?
 
-### Using Manifest Files with kubectl
+I provide a helm repo with the same charts, which already includes these defaults for mysql-operator. See here: https://canozokur.github.io/mysql-operator
 
-If you're deploying with kubectl following the original documentation (included below) open up the `deploy-operator.yaml` file and update the `mysql-operator` Deployment kind to:
+For mysql-innodbcluster chart, things are a bit more complicated. The original chart doesn't allow you to override podSpec for your router instances. I had to add support for it. An example values file can look like this:
 
-```yaml
-...snip...
-spec:
-      containers:
-        - name: mysql-operator
-          image: ghcr.io/canozokur/mysql-operator:8.0.31-2.0.7 # this is an example
-                                                               # always use the latest tag!
-...snip...
+```
+podSpec:
+  initContainers:
+    - name: fixdatadir
+      image: ghcr.io/canozokur/mysql-operator:8.0.31-2.0.7
+    - name: initconf
+      image: ghcr.io/canozokur/mysql-operator:8.0.31-2.0.7
+  containers:
+    - name: sidecar
+      image: ghcr.io/canozokur/mysql-operator:8.0.31-2.0.7
+router:
+  podSpec:
+    containers:
+      - name: router
+        image: ghcr.io/canozokur/mysql-router:8.0.31
 ```
 
-### Using Helm
-
-If you're using Helm to deploy your operator, add these to your `values.yml` file:
-
-```yaml
-image:
-  registry: ghcr.io
-  repository: canozokur
-```
+And don't forget to change the tags according to your needs!
 
 [Original README](https://github.com/mysql/mysql-operator/blob/trunk/README.md) included below:
 
