@@ -1,3 +1,40 @@
+# MySQL Operator for Kubernetes ARM64 build
+
+## Introduction
+
+The original MySQL Operator for Kubernetes repo doesn't provide ARM64 builds. This is unfortunate since MySQL docker images
+have arm support, but since the operator itself isn't built for that platform you can't deploy it in your clusters via an operator.
+
+Upstream repo doesn't provide their "python-deps" docker image either. This repo follows [Oracle's documentation](https://docs.oracle.com/en/database/oracle/machine-learning/oml4py/1/mlpug/build-and-install-python-linux-premises-databases.html) to build a Python container with all the requirements installed.
+
+## How to use the images?
+
+### Using Manifest Files with kubectl
+
+If you're deploying with kubectl following the original documentation (included below) open up the `deploy-operator.yaml` file and update the `mysql-operator` Deployment kind to:
+
+```yaml
+...snip...
+spec:
+      containers:
+        - name: mysql-operator
+          image: ghcr.io/canozokur/mysql-operator:8.0.31-2.0.7 # this is an example
+                                                               # always use the latest tag!
+...snip...
+```
+
+### Using Helm
+
+If you're using Helm to deploy your operator, add these to your `values.yml` file:
+
+```yaml
+image:
+  registry: ghcr.io
+  repository: canozokur
+```
+
+[Original README](https://github.com/mysql/mysql-operator/blob/trunk/README.md) included below:
+
 # MySQL Operator for Kubernetes
 
 ## Introduction
