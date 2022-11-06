@@ -1,6 +1,6 @@
 image:
-  registry:
-  repository: mysql
+  registry: ghcr.io
+  repository: canozokur
   name: mysql-operator
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
