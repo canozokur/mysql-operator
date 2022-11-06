@@ -1,0 +1,27 @@
+apiVersion: v1
+entries:
+  mysql-innodbcluster:
+  - apiVersion: v2
+    appVersion: 8.0.31
+    created: "2022-11-06T17:52:50.625515122Z"
+    description: MySQL InnoDB Cluster Helm Chart for deploying MySQL InnoDB Cluster in Kubernetes
+    digest: be8263a0997db66f61b9227c0b1b150f224ce4219622ba21afaa08b20ff22cc5
+    icon: https://labs.mysql.com/common/themes/sakila/favicon.ico
+    name: mysql-innodbcluster
+    type: application
+    urls:
+    - https://github.com/canozokur/mysql-operator/releases/download/mysql-innodbcluster-0.0.1/mysql-innodbcluster-0.0.1.tgz
+    version: 0.0.1
+  mysql-operator:
+  - apiVersion: v2
+    appVersion: 8.0.31-2.0.7
+    created: "2022-11-06T17:52:50.736299191Z"
+    description: MySQL Operator Helm Chart for deploying MySQL InnoDB Cluster in Kubernetes
+    digest: db5b97ed971c93167e355f3d80db18180fd697b6e3d9ac70c8e210875a150a52
+    icon: https://labs.mysql.com/common/themes/sakila/favicon.ico
+    name: mysql-operator
+    type: application
+    urls:
+    - https://github.com/canozokur/mysql-operator/releases/download/mysql-operator-0.0.1/mysql-operator-0.0.1.tgz
+    version: 0.0.1
+generated: "2022-11-06T17:52:50.48895264Z"
