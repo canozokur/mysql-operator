@@ -80,6 +80,7 @@ def list_tests(suites):
 def setup_logging(verbose: bool):
     gray = ""
     logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO,
+                        stream=sys.stdout,
                         format="\033[1;34m%(asctime)s  %(name)-10s  [%(levelname)-8s]\033[0m   %(message)s")
 
 
@@ -107,13 +108,15 @@ if __name__ == '__main__':
 
     tutil.g_test_data_dir = os.path.join(basedir, "data")
 
+    DEFAULT_OPERATOR_DEBUG_LEVEL = 3
+
     opt_include = []
     opt_exclude = []
     opt_suite_path = None
     opt_verbose = False
     opt_debug = False
     opt_verbosity = 2
-    opt_nodes = 1
+    opt_nodes = None
     opt_kube_version = None
     opt_setup = True
     opt_load_images = False
@@ -171,7 +174,9 @@ if __name__ == '__main__':
         elif arg == "--dkube":
             kutil.debug_kubectl = True
         elif arg == "--doperator":
-            BaseEnvironment.opt_operator_debug_level = 3
+            BaseEnvironment.opt_operator_debug_level = DEFAULT_OPERATOR_DEBUG_LEVEL
+        elif arg.startswith("--doperator="):
+            BaseEnvironment.opt_operator_debug_level = int(arg.split("=")[-1])
         elif arg == "--doci":
             ociutil.debug_ocicli = True
         elif arg == "--mount-operator" or arg == "-O":
@@ -198,10 +203,14 @@ if __name__ == '__main__':
             g_ts_cfg.oci_config_path=arg.partition("=")[-1]
         elif arg.startswith("--oci-bucket="):
             g_ts_cfg.oci_bucket_name=arg.partition("=")[-1]
+        elif arg.startswith("--vault-cfg="):
+            g_ts_cfg.vault_cfg_path=arg.partition("=")[-1]
         elif arg.startswith("--suite="):
             opt_suite_path = arg.partition("=")[-1]
         elif arg.startswith("--xml="):
             opt_xml_report_path = arg.partition("=")[-1]
+        elif arg.startswith("--work-dir=") or arg.startswith("--workdir="):
+            g_ts_cfg.work_dir = arg.split("=")[-1]
         elif arg.startswith("-"):
             print(f"Invalid option {arg}")
             sys.exit(1)
@@ -278,12 +287,12 @@ if __name__ == '__main__':
                         import xmlrunner
                         from xmlrunner.extra.xunit_plugin import transform
                         xml_report_output = io.BytesIO()
-                        runner = xmlrunner.XMLTestRunner(output=xml_report_output)
+                        runner = xmlrunner.XMLTestRunner(stream=sys.stdout,output=xml_report_output)
                         runner.run(suites)
                         with open(opt_xml_report_path, 'wb') as xml_report:
                            xml_report.write(transform(xml_report_output.getvalue()))
                     else:
-                        runner = unittest.TextTestRunner(verbosity=opt_verbosity)
+                        runner = unittest.TextTestRunner(stream=sys.stdout,verbosity=opt_verbosity)
                         runner.run(suites)
             except:
                 tutil.g_full_log.shutdown()

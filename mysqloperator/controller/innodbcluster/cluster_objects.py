@@ -3,7 +3,8 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 #
 
-from logging import Logger
+from logging import Logger, getLogger
+from typing import List, Dict
 from ..kubeutils import client as api_client, ApiException
 from .. import utils, config, consts
 from .cluster_api import InnoDBCluster, InnoDBClusterSpec
@@ -187,6 +188,7 @@ spec:
         runAsUser: 27
         runAsGroup: 27
         fsGroup: 27
+      terminationGracePeriodSeconds: 120
       initContainers:
       - name: fixdatadir
         image: {spec.operator_image}
@@ -399,8 +401,9 @@ spec:
         lifecycle:
           preStop:
             exec:
-              command: ["sh", "-c", "sleep 20 && mysqladmin -ulocalroot shutdown"]
-        terminationGracePeriodSeconds: 110
+              # 60 is the default value for dba.gtidWaitTimeout
+              # see https://dev.mysql.com/doc/mysql-shell/8.0/en/mysql-innodb-cluster-working-with-cluster.html
+              command: ["sh", "-c", "sleep 60 && mysqladmin -ulocalroot shutdown"]
         startupProbe:
           exec:
             command: ["/livenessprobe.sh", "8"]
@@ -476,6 +479,18 @@ spec:
 
     statefulset = yaml.safe_load(tmpl.replace("\n\n", "\n"))
 
+    metadata = {}
+    if spec.podAnnotations:
+        metadata['annotations'] = spec.podAnnotations
+    if spec.podLabels:
+        metadata['labels'] = spec.podLabels
+
+    if len(metadata):
+        utils.merge_patch_object(statefulset["spec"]["template"], {"metadata" : metadata })
+
+    if spec.keyring:
+        spec.keyring.add_to_sts_spec(statefulset)
+
     if spec.podSpec:
         utils.merge_patch_object(statefulset["spec"]["template"]["spec"],
                                  spec.podSpec, "spec.podSpec")
@@ -483,6 +498,7 @@ spec:
     if spec.datadirVolumeClaimTemplate:
         utils.merge_patch_object(statefulset["spec"]["volumeClaimTemplates"][0]["spec"],
                                  spec.datadirVolumeClaimTemplate, "spec.volumeClaimTemplates[0].spec")
+
 
     return statefulset
 
@@ -522,7 +538,27 @@ roleRef:
     return rolebinding
 
 
-def prepare_initconf(cluster: InnoDBCluster, spec: InnoDBClusterSpec, logger) -> dict:
+def prepare_component_config_configmaps(cluster: InnoDBCluster, logger: Logger) -> List[Dict]:
+    spec = cluster.parsed_spec
+    configmaps = []
+    if spec.keyring.is_component:
+        cm = spec.keyring.get_component_config_configmap_manifest()
+        configmaps.append(cm)
+
+    return configmaps
+
+
+def prepare_component_config_secrets(cluster: InnoDBCluster, logger: Logger) -> List[Dict]:
+    spec = cluster.parsed_spec
+    secrets = []
+    if spec.keyring.is_component:
+        cm = spec.keyring.get_component_config_secret_manifest()
+        if cm:
+          secrets.append(cm)
+
+    return secrets
+
+def prepare_initconf(cluster: InnoDBCluster, spec: InnoDBClusterSpec, logger: Logger) -> dict:
 
     liveness_probe = """#!/bin/bash
 # Copyright (c) 2020, 2021, Oracle and/or its affiliates.
@@ -569,16 +605,16 @@ fi
 """
 
     readiness_probe = """#!/bin/bash
-# Copyright (c) 2020, 2021, Oracle and/or its affiliates.
+# Copyright (c) 2020, 2022, Oracle and/or its affiliates.
 
 # Once the container is ready, it's always ready.
-if [ -f /mysql-ready ]; then
+if [ -f /tmp/mysql-ready ]; then
   exit 0
 fi
 
 # Ping server to see if it is ready
 if mysqladmin -umysqlhealthchecker ping; then
-  touch /mysql-ready
+  touch /tmp/mysql-ready
   exit 0
 else
   exit 1
@@ -588,8 +624,8 @@ fi
     has_crl = cluster.tls_has_crl()
 
     if not spec.tlsUseSelfSigned:
-        logger.info(f"CA={cluster.get_server_ca_and_tls().get('CA')}")
-        ca_file_name = cluster.get_server_ca_and_tls().get("CA", "ca.pem")
+        logger.info(f"CA={cluster.get_ca_and_tls().get('CA')}")
+        ca_file_name = cluster.get_ca_and_tls().get("CA", "ca.pem")
     else:
         ca_file_name = ""
 
@@ -683,7 +719,12 @@ data:
 
 
 """
-    return yaml.safe_load(tmpl)
+    cm = yaml.safe_load(tmpl)
+
+    if spec.keyring and not spec.keyring.is_component:
+        spec.keyring.add_to_initconf(cm)
+
+    return cm
 
 
 def reconcile_stateful_set(cluster: InnoDBCluster, logger: Logger) -> None:

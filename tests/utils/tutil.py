@@ -12,22 +12,18 @@ import unittest
 import subprocess
 import logging
 import os
-from utils import auxutil
+from utils import auxutil, ociutil
 
 from utils.auxutil import isotime
 from . import fmt
 from . import kutil
 from . import mutil
-import yaml
 import time
-import datetime
 import sys
-import traceback
 import re
 from .aggrlog import LogAggregator
 from kubernetes.stream import stream
 from kubernetes import client
-from kubernetes.client.api import core_v1_api
 from kubernetes.stream.ws_client import ERROR_CHANNEL
 
 g_test_data_dir = "."
@@ -159,7 +155,7 @@ def run_from_operator_pod(uri, script):
                         stdout=True, tty=False,
                         _preload_content=True)
 
-    return r.split("##########", 1)[-1].strip()
+    return auxutil.purge_warnings(r.split("##########", 1)[-1].strip())
 
 #
 
@@ -315,16 +311,43 @@ class PodHelper:
                         checkabort=self.owner.check_operator_exceptions)
 
 
+def mangle_name(base_name):
+    ns = []
+    prev_chr_was_upper = False
+    for chr in base_name:
+        if chr.isupper():
+            if len(ns) > 0 and not prev_chr_was_upper:
+                ns.append('-')
+            ns.append(chr.lower())
+            prev_chr_was_upper = True
+        else:
+            ns.append(chr)
+            prev_chr_was_upper = False
+    return ''.join(ns)
+
 class OperatorTest(unittest.TestCase):
     logger = logging
-    ns = "testns"
+    stream_handler = None
+    ns = None
     op_stdout = []
     op_check_stdout = None
     default_allowed_op_errors: List[str]
 
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls, ns=None):
+        # set up loggers
+        cls.stream_handler = logging.StreamHandler(sys.stdout)
+        cls.logger.addHandler(cls.stream_handler)
+        logger.addHandler(cls.stream_handler) # tutil.logger
+        kutil.logger.addHandler(cls.stream_handler)
+        mutil.logger.addHandler(cls.stream_handler)
+        ociutil.logger.addHandler(cls.stream_handler)
+
         cls.logger.info(f"Starting {cls.__name__}")
+        if ns:
+            __class__.ns = ns
+        else:
+            __class__.ns = mangle_name(cls.__name__)
 
         leftovers = kutil.ls_all_raw(cls.ns)
         if leftovers:
@@ -364,14 +387,22 @@ class OperatorTest(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        kutil.delete_pvc(cls.ns, None)
+        try:
+            kutil.delete_pvc(cls.ns, None)
 
-        leftovers = kutil.ls_all_raw(cls.ns)
-        if leftovers:
-            cls.logger.error(
-                "Namespace %s not empty at the end of the test case!", cls.ns)
-            cls.logger.info("%s", leftovers)
-            wipe_ns(cls.ns)
+            leftovers = kutil.ls_all_raw(cls.ns)
+            if leftovers:
+                cls.logger.error(
+                    "Namespace %s not empty at the end of the test case!", cls.ns)
+                cls.logger.info("%s", leftovers)
+                wipe_ns(cls.ns)
+        finally:
+            if cls.stream_handler:
+                logger.removeHandler(cls.stream_handler) # tutil.logger
+                kutil.logger.removeHandler(cls.stream_handler)
+                mutil.logger.removeHandler(cls.stream_handler)
+                ociutil.logger.removeHandler(cls.stream_handler)
+                cls.logger.removeHandler(cls.stream_handler)
 
     def setUp(self):
         self.allowed_op_logged_errors = self.default_allowed_op_errors[:]
@@ -402,7 +433,7 @@ class OperatorTest(unittest.TestCase):
             if t == type and r == reason and msgpat.match(m):
                 return True
         else:
-            print(f"Events for {cluster}", "\n".join([str(x) for x in events]))
+            logger.info(f"Events for {cluster}" + "\n".join([str(x) for x in events]))
             return False
 
     def assertGotClusterEvent(self, cluster, after=None, *, type, reason, msg):
@@ -411,10 +442,13 @@ class OperatorTest(unittest.TestCase):
                 f"Event ({type}, {reason}, {msg}) not found for {cluster}")
 
     def wait_got_cluster_event(self, cluster, after=None, timeout=90, delay=2, *, type, reason, msg):
+        def timeout_diagnostics():
+            kutil.store_ic_diagnostics(self.ns, cluster)
+
         def check_has_got_cluster_event():
             return self.has_got_cluster_event(cluster, after, type=type, reason=reason, msg=msg)
 
-        self.wait(check_has_got_cluster_event, timeout=timeout, delay=delay)
+        self.wait(check_has_got_cluster_event, timeout=timeout, delay=delay, timeout_diagnostics=timeout_diagnostics)
 
     def check_operator_exceptions(self):
         # Raise an exception if there's no hope that the operator will make progress
@@ -443,7 +477,7 @@ class OperatorTest(unittest.TestCase):
         # Raise an exception if pods enter an error state they're not expected to
         pass  # TODO
 
-    def wait(self, fn, args=tuple(), check=None, timeout=60, delay=2):
+    def wait(self, fn, args=tuple(), check=None, timeout=60, delay=2, timeout_diagnostics=None):
         # TODO abort watchers when nothing new gets printed by operator for a while too
         self.check_operator_exceptions()
 
@@ -470,6 +504,8 @@ class OperatorTest(unittest.TestCase):
         else:
             self.logger.error("Waited condition never became true")
 
+        if timeout_diagnostics:
+            timeout_diagnostics()
         raise Exception("Timeout waiting for condition")
 
     def get_pod(self, name, ns=None):
@@ -523,7 +559,10 @@ class OperatorTest(unittest.TestCase):
 
             return num_online == len(router_names)
 
-        self.wait(routers_ready, timeout=timeout)
+        def timeout_diagnostics():
+            kutil.store_routers_diagnostics(self.ns, name_pattern)
+
+        self.wait(routers_ready, timeout=timeout, timeout_diagnostics=timeout_diagnostics)
 
         return router_names
 

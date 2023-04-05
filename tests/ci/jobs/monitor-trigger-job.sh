@@ -9,7 +9,7 @@
 # but it shall change in the future, hopefully
 set -vx
 
-source $WORKSPACE/tests/ci/jobs/auxiliary/set-env.sh
+source $WORKSPACE/tests/ci/jobs/auxiliary/set-env.sh || return
 
 echo "GIT_COMMIT: ${GIT_COMMIT}"
 echo "GIT_COMMITTER_NAME: ${GIT_COMMITTER_NAME}"
@@ -30,21 +30,23 @@ dev|trunk)
 	# skip, should be triggered by concourse
 	;;
 itch)
-	JOB_NAME="itch"
+	PIPELINE_NAME="itch"
 	;;
 qa)
-	JOB_NAME="qa"
+	PIPELINE_NAME="qa"
 	;;
-qa*|sqa*|ci*)
-	JOB_NAME="qa"
+ci/experimental/*)
+	# skip triggering build for an experimental branch related to changes in CI
+	;;
+qa*|sqa*|ci/*)
+	PIPELINE_NAME="qa"
 	;;
 *)
-	JOB_NAME="dev"
+	PIPELINE_NAME="dev"
 	;;
 esac
-# JOB_NAME=test-pipeline
 
-if [[ -z $JOB_NAME ]]; then
+if [[ -z $PIPELINE_NAME ]]; then
 	echo "skipped ${GIT_BRANCH} $GIT_COMMIT"
 	exit 0
 fi
@@ -52,8 +54,10 @@ fi
 OPERATOR_GIT_REVISION=$GIT_COMMIT
 OPERATOR_DEV_IMAGE_TAG=$(git describe --tags)'-dev'
 OPERATOR_IMAGE=$LOCAL_REGISTRY_ADDRESS/$LOCAL_REPOSITORY_NAME/mysql-operator:$OPERATOR_DEV_IMAGE_TAG
+OPERATOR_ENTERPRISE_IMAGE=$LOCAL_REGISTRY_ADDRESS/$LOCAL_REPOSITORY_NAME/enterprise-operator:$OPERATOR_DEV_IMAGE_TAG
 
-JOB_PARAMS="OPERATOR_GIT_REVISION=${OPERATOR_GIT_REVISION}&OPERATOR_IMAGE=${OPERATOR_IMAGE}&OPERATOR_INTERNAL_BUILD=true"
+JOB_PARAMS="OPERATOR_GIT_REVISION=${OPERATOR_GIT_REVISION}&OPERATOR_IMAGE=${OPERATOR_IMAGE}"
+JOB_PARAMS="${JOB_PARAMS}&OPERATOR_ENTERPRISE_IMAGE=${OPERATOR_ENTERPRISE_IMAGE}&OPERATOR_INTERNAL_BUILD=true"
 
-JOB_LINK=${JOB_PREFIX}/${JOB_NAME}
+JOB_LINK=${JOB_PREFIX}/${PIPELINE_NAME}
 curl -X POST -u ${JENKINS_USER_CRED} ${JOB_LINK}/buildWithParameters?${JOB_PARAMS}

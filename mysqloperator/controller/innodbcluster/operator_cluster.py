@@ -13,7 +13,7 @@ from .. import consts, kubeutils, config, utils, errors, diagnose
 from .. import shellutils
 from ..group_monitor import g_group_monitor
 from ..utils import g_ephemeral_pod_state
-from ..kubeutils import api_core, api_apps, api_policy, api_rbac, api_cron_job
+from ..kubeutils import api_core, api_apps, api_policy, api_rbac, api_cron_job, k8s_version
 from ..backup import backup_objects
 from ..config import DEFAULT_OPERATOR_VERSION_TAG
 from .cluster_controller import ClusterController, ClusterMutex
@@ -52,7 +52,7 @@ def monitor_existing_clusters(logger: Logger) -> None:
 def on_innodbcluster_create(name: str, namespace: Optional[str], body: Body,
                             logger: Logger, **kwargs) -> None:
     logger.info(
-        f"Initializing InnoDB Cluster name={name} namespace={namespace}")
+        f"Initializing InnoDB Cluster name={name} namespace={namespace} on K8s {k8s_version()}")
 
     cluster = InnoDBCluster(body)
 
@@ -89,11 +89,25 @@ def on_innodbcluster_create(name: str, namespace: Optional[str], body: Body,
             if e.status == 404:
                 return None
             raise
+
     #print(f"Default operator IC edition: {config.MYSQL_OPERATOR_DEFAULT_IC_EDITION} Edition")
     cluster.log_cluster_info(logger)
 
     if not cluster.ready:
         try:
+            print("0.Configuration ConfigMaps")
+            for cm in cluster_objects.prepare_component_config_configmaps(cluster, logger):
+                if not cluster.get_configmap(cm['metadata']['name']):
+                    print(f"\tCreating...{cm}")
+                    kopf.adopt(cm)
+                    api_core.create_namespaced_config_map(namespace, cm)
+
+            for secret in cluster_objects.prepare_component_config_secrets(cluster, logger):
+                if not cluster.get_secret(secret['metadata']['name']):
+                    print(f"\tCreating...{secret}")
+                    kopf.adopt(secret)
+                    api_core.create_namespaced_secret(namespace, secret)
+
             print("1. Initial Configuration ConfigMap and Container Probes")
             if not ignore_404(cluster.get_initconf):
                 print("\tPreparing...")
@@ -177,7 +191,7 @@ def on_innodbcluster_create(name: str, namespace: Optional[str], body: Body,
                     # This will create the deployment but 0 instances. When the cluster is created (first
                     # instance joins it) the instance count will be set to icspec.router.instances
                     router_deployment = router_objects.prepare_router_deployment(cluster, init_only=True)
-                    print("\tCreating...")
+                    print(f"\tCreating...{router_deployment}")
                     kopf.adopt(router_deployment)
                     api_apps.create_namespaced_deployment(namespace=namespace, body=router_deployment)
                 else:

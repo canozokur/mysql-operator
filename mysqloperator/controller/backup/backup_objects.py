@@ -60,6 +60,60 @@ metadata:
 spec:
   template:
     spec:
+      securityContext:
+        allowPrivilegeEscalation: false
+        privileged: false
+        readOnlyRootFilesystem: true
+        runAsUser: 27
+        runAsGroup: 27
+        fsGroup: 27
+        capabilities:
+          drop:
+          - "AUDIT_CONTROL"
+# CAP_AUDIT_READ was introduced in Linux 3.16 which could be too new for some K8s installations RH7
+#          - "AUDIT_READ"
+          - "AUDIT_WRITE"
+          - "BLOCK_SUSPEND"
+# CAP_BPF was introduced in Linux 5.8 which could be too new for some K8s installations
+#          - "BPF"
+# CAP_CHECKPOINT_RESTORE was introduced in Linux 5.9 which could be too new for some K8s installations
+#          - "CHECKPOINT_RESTORE"
+          - "CHOWN"
+          - "DAC_READ_SEARCH"
+          - "DAC_OVERRIDE"
+          - "FOWNER"
+          - "FSETID"
+          - "IPC_LOCK"
+          - "IPC_OWNER"
+          - "KILL"
+          - "LEASE"
+          - "LINUX_IMMUTABLE"
+          - "MAC_ADMIN"
+          - "MAC_OVERRIDE"
+          - "MKNOD"
+          - "NET_ADMIN"
+          - "NET_BIND_SERVICE"
+          - "NET_BROADCAST"
+          - "NET_RAW"
+# CAP_PERFMON was introduced in Linux 5.8 which could be too new for some K8s installations
+#          - "PERFMON"
+          - "SETGID"
+          - "SETUID"
+          - "SETFCAP"
+          - "SETPCAP"
+          - "SYS_ADMIN"
+          - "SYS_BOOT"
+          - "SYS_CHROOT"
+          - "SYS_MODULE"
+          - "SYS_NICE"
+          - "SYS_PACCT"
+          - "SYS_PTRACE"
+          - "SYS_RAWIO"
+          - "SYS_RESOURCE"
+          - "SYS_TIME"
+          - "SYS_TTY_CONFIG"
+          - "SYSLOG"
+          - "WAKE_ALARM"
       containers:
       - name: operator-backup-job
         image: {spec.operator_image}
@@ -86,6 +140,15 @@ spec:
 {utils.indent(spec.service_account_name, 6)}
 """
     job = yaml.safe_load(tmpl)
+
+    metadata = {}
+    if spec.backupProfile.podAnnotations:
+        metadata['annotations'] = spec.backupProfile.podAnnotations
+    if spec.backupProfile.podLabels:
+        metadata['labels'] = spec.backupProfile.podLabels
+
+    if len(metadata):
+        utils.merge_patch_object(job["spec"]["template"], {"metadata" : metadata })
 
     spec.add_to_pod_spec(job["spec"]["template"], "operator-backup-job")
 
@@ -115,7 +178,21 @@ spec:
 
 
 def prepare_mysql_backup_object_by_profile_object(name: str, cluster_name: str, backup_profile: dict) -> dict:
+
+    pod_labels = backup_profile.get("podLabels")
+    if pod_labels:
+      labels = f"""
+podLabels: {pod_labels}
+"""
+
+    pod_annotations = backup_profile.get("podAnnotations")
+    if pod_annotations:
+      annotations = f"""
+podAnnotations: {pod_annotations}
+"""
+
     # No need to namespace it. A namespaced job will be created by the caller
+
     tmpl = f"""
 apiVersion: {consts.GROUP}/{consts.VERSION}
 kind: {consts.MYSQLBACKUP_KIND}
@@ -132,6 +209,8 @@ spec:
   clusterName: {cluster_name}
   backupProfile:
     name: {name}
+{utils.indent(labels, 4) if pod_labels else ""}
+{utils.indent(annotations, 4) if pod_annotations else ""}
   addTimestampToBackupDirectory: false
 """
 
@@ -181,6 +260,60 @@ spec:
       backoffLimit: 0
       template:
         spec:
+          secutiryContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsUser: 27
+            runAsGroup: 27
+            fsGroup: 27
+            capabilities:
+              drop:
+              - "AUDIT_CONTROL"
+# CAP_AUDIT_READ was introduced in Linux 3.16 which could be too new for some K8s installations RH7
+#              - "AUDIT_READ"
+              - "AUDIT_WRITE"
+              - "BLOCK_SUSPEND"
+# CAP_BPF was introduced in Linux 5.8 which could be too new for some K8s installations
+#              - "BPF"
+# CAP_CHECKPOINT_RESTORE was introduced in Linux 5.9 which could be too new for some K8s installations
+#              - "CHECKPOINT_RESTORE"
+              - "CHOWN"
+              - "DAC_READ_SEARCH"
+              - "DAC_OVERRIDE"
+              - "FOWNER"
+              - "FSETID"
+              - "IPC_LOCK"
+              - "IPC_OWNER"
+              - "KILL"
+              - "LEASE"
+              - "LINUX_IMMUTABLE"
+              - "MAC_ADMIN"
+              - "MAC_OVERRIDE"
+              - "MKNOD"
+              - "NET_ADMIN"
+              - "NET_BIND_SERVICE"
+              - "NET_BROADCAST"
+              - "NET_RAW"
+# CAP_PERFMON was introduced in Linux 5.8 which could be too new for some K8s installations
+#              - "PERFMON"
+              - "SETGID"
+              - "SETUID"
+              - "SETFCAP"
+              - "SETPCAP"
+              - "SYS_ADMIN"
+              - "SYS_BOOT"
+              - "SYS_CHROOT"
+              - "SYS_MODULE"
+              - "SYS_NICE"
+              - "SYS_PACCT"
+              - "SYS_PTRACE"
+              - "SYS_RAWIO"
+              - "SYS_RESOURCE"
+              - "SYS_TIME"
+              - "SYS_TTY_CONFIG"
+              - "SYSLOG"
+              - "WAKE_ALARM"
           containers:
           - name: operator-backup-job-cron
             image: {spec.operator_image}
@@ -190,8 +323,6 @@ spec:
                       "--namespace", "{spec.namespace}",
                       "--cluster-name", "{spec.name}"
             ]
-            securityContext:
-              runAsUser: 27
             env:
             - name: MYSQLSH_USER_CONFIG_HOME
               value: /mysqlsh

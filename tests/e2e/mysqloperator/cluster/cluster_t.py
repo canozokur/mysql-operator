@@ -120,7 +120,7 @@ class Cluster1Defaults(tutil.OperatorTest):
 
         super().tearDownClass()
 
-    def test_0_create(self):
+    def test_00_create(self):
         """
         Create cluster, check posted events.
         """
@@ -137,9 +137,21 @@ spec:
   instances: 1
   router:
     instances: 0
+    podLabels:
+      router-label13: "router-label13-val"
+      router-label42: "router-label42-val"
+    podAnnotations:
+      router.mycluster.example.com/ann13: "ann13-value"
+      router.mycluster.example.com/ann42: "ann42-value"
   secretName: mypwds
   edition: community
   tlsUseSelfSigned: true
+  podLabels:
+    mycluster-label1: "mycluster-label1-value"
+    mycluster-label2: "mycluster-label2-value"
+  podAnnotations:
+    mycluster.example.com/ann1: "ann1-value"
+    mycluster.example.com/ann2: "ann2-value"
 """
 
         apply_time = isotime()
@@ -166,7 +178,26 @@ spec:
             "mycluster", after=apply_time, type="Normal",
             reason=r"StatusChange", msg="Cluster status changed to ONLINE. 1 member\(s\) ONLINE")
 
-    def test_1_check_accounts(self):
+    def test_01_check_labels_and_annotations(self):
+        server_pods = kutil.ls_po(self.ns, pattern=f"mycluster-\d")
+        pod_names = [server["NAME"] for server in server_pods]
+        for pod_name in pod_names:
+            pod = kutil.get_po(self.ns, pod_name)
+            self.assertEqual(pod['metadata']['labels']['mycluster-label1'], 'mycluster-label1-value')
+            self.assertEqual(pod['metadata']['labels']['mycluster-label2'], 'mycluster-label2-value')
+            self.assertEqual(pod['metadata']['annotations']['mycluster.example.com/ann1'], 'ann1-value')
+            self.assertEqual(pod['metadata']['annotations']['mycluster.example.com/ann2'], 'ann2-value')
+
+        router_pods = kutil.ls_po(self.ns, pattern=f"mycluster-router-.*")
+        pod_names = [router["NAME"] for router in router_pods]
+        for pod_name in pod_names:
+            pod = kutil.get_po(self.ns, pod_name)
+            self.assertEqual(pod['metadata']['labels']['router-label13'], 'router-label13-val')
+            self.assertEqual(pod['metadata']['labels']['router-label42'], 'router-label42-val')
+            self.assertEqual(pod['metadata']['annotations']['router.mycluster.example.com/ann13'], 'ann13-value')
+            self.assertEqual(pod['metadata']['annotations']['router.mycluster.example.com/ann42'], 'ann42-value')
+
+    def test_03_check_accounts(self):
         with mutil.MySQLPodSession(self.ns, "mycluster-0", "root", "sakila") as s:
             accts = set([row[0] for row in s.query_sql(
                 "SELECT concat(user,'@',host) FROM mysql.user").fetch_all()])
@@ -174,7 +205,7 @@ spec:
                                             "localroot@localhost", "mysqladmin@%", "mysqlbackup@%", "mysqlrouter@%",
                                             "mysqlhealthchecker@localhost", "mysql_innodb_cluster_1000@%"] + DEFAULT_MYSQL_ACCOUNTS))
 
-    def test_1_bad_changes(self):
+    def test_05_bad_changes(self):
         return  # TODO
         # this should trigger an error and no changes
         # changes after this should continue working normally
@@ -187,7 +218,7 @@ spec:
         check_all(self, self.ns, "mycluster",
                   instances=1, routers=1, primary=0)
 
-    def test_1_grow_2(self):
+    def test_07_grow_2(self):
         kutil.patch_ic(self.ns, "mycluster", {
                        "spec": {"instances": 2}}, type="merge")
 
@@ -199,7 +230,10 @@ spec:
 
         check_all(self, self.ns, "mycluster", instances=2, routers=0, primary=0)
 
-    def test_2_addrouters(self):
+    def test_08_check_labels_and_annotations(self):
+        self.test_01_check_labels_and_annotations()
+
+    def test_09_addrouters(self):
         kutil.patch_ic(self.ns, "mycluster", {
                        "spec": {"router": {"instances": 3}}}, type="merge")
 
@@ -210,8 +244,10 @@ spec:
 
         # TODO add traffic, check routing
 
+    def test_10_check_labels_and_annotations(self):
+        self.test_01_check_labels_and_annotations()
 
-    def test_3_check_security(self):
+    def test_11_check_security(self):
         """
         Ensure PodSecurityContext has required restrictions.
         """
@@ -244,7 +280,7 @@ spec:
         check_pod(p, 999, "mysqlrouter", "mysqlrouter")
 
 
-    def test_4_grow_3(self):
+    def test_13_grow_3(self):
         kutil.patch_ic(self.ns, "mycluster", {
                        "spec": {"instances": 3}}, type="merge")
 
@@ -256,7 +292,10 @@ spec:
 
         check_all(self, self.ns, "mycluster", instances=3, primary=0)
 
-    def test_5_shrink1(self):
+    def test_14_check_labels_and_annotations(self):
+        self.test_01_check_labels_and_annotations()
+
+    def test_15_shrink1(self):
         kutil.patch_ic(self.ns, "mycluster", {
                        "spec": {"instances": 1}}, type="merge")
 
@@ -269,7 +308,7 @@ spec:
 
         check_all(self, self.ns, "mycluster", instances=1, primary=0)
 
-    def test_6_recover_crash_1(self):
+    def test_17_recover_crash_1(self):
         """
         Force a mysqld process crash.
         The only thing expected to happen is that mysql restarts and the
@@ -315,7 +354,7 @@ spec:
 
         check_all(self, self.ns, "mycluster", instances=1, primary=0)
 
-    def test_6_recover_sidecar_crash_1(self):
+    def test_19_recover_sidecar_crash_1(self):
         """
         Force a sidecar process crash.
         Nothing is expected to happen other than sidecar restarting and
@@ -341,7 +380,7 @@ spec:
 
         def ready():
             pod = kutil.get_po(self.ns, "mycluster-0")
-            print(check_apiobjects.get_pod_container(
+            self.logger.debug(check_apiobjects.get_pod_container(
                 pod, "sidecar")["restartCount"])
             return check_apiobjects.get_pod_container(pod, "sidecar")["restartCount"] == sidecar_cont["restartCount"]+1
 
@@ -362,7 +401,7 @@ spec:
         # check that all containers are OK
         check_all(self, self.ns, "mycluster", instances=1, primary=0)
 
-    def test_6_recover_restart_1(self):
+    def test_21_recover_restart_1(self):
         pod = kutil.get_po(self.ns, "mycluster-0")
         mysql_cont = check_apiobjects.get_pod_container(pod, "mysql")
         sidecar_cont = check_apiobjects.get_pod_container(pod, "sidecar")
@@ -393,7 +432,7 @@ spec:
 
         check_all(self, self.ns, "mycluster", instances=1, primary=0)
 
-    def test_6_recover_shutdown_1(self):
+    def test_23_recover_shutdown_1(self):
         pod = kutil.get_po(self.ns, "mycluster-0")
         mysql_cont = check_apiobjects.get_pod_container(pod, "mysql")
         sidecar_cont = check_apiobjects.get_pod_container(pod, "sidecar")
@@ -429,7 +468,7 @@ spec:
     # TODO also test that deleting the only pod + pvc is detected as a
     # complete data wipe/replacement
 
-    def test_6_recover_delete_1(self):
+    def test_25_recover_delete_1(self):
         kutil.delete_po(self.ns, "mycluster-0", timeout=200)
 
         apply_time = isotime()
@@ -451,7 +490,7 @@ spec:
 
         check_all(self, self.ns, "mycluster", instances=1, primary=0)
 
-    def test_6_recover_stop_1(self):
+    def test_27_recover_stop_1(self):
         return
         with mutil.MySQLPodSession(self.ns, "mycluster-0", "root", "sakila") as s0:
             s0.exec_sql("stop group_replication")
@@ -467,7 +506,7 @@ spec:
 
         check_all(self, self.ns, "mycluster", instances=1, primary=0)
 
-    def test_9_destroy(self):
+    def test_99_destroy(self):
         kutil.delete_ic(self.ns, "mycluster")
 
         self.wait_pod_gone("mycluster-0")
@@ -611,10 +650,10 @@ spec:
         query_result = shell.query_dict("select concat(@@report_host, ':', @@port) as r;")
         if not query_result:
             return False
-        print(query_result)
+        self.logger.debug(query_result)
 
         result = query_result[0]
-        print(result)
+        self.logger.debug(result)
 
         if type(expected_routing_settings) is str:
             self.assertEqual(result['r'], expected_routing_settings)
@@ -632,7 +671,7 @@ spec:
                     communicated = True
                     break
             except BaseException as err:
-                print(f"Unexpected {err=}, {type(err)=}")
+                self.logger.error(f"Unexpected {err=}, {type(err)=}")
 
         self.assertTrue(communicated, f"couldn't communicate with the host {address}")
 
@@ -663,35 +702,35 @@ spec:
 
         # check classic session to R/W port
         self.verify_routing(
-            "mycluster.testns.svc.cluster.local:3306",
-            "mycluster-0.mycluster-instances.testns.svc.cluster.local:3306")
+            f"mycluster.{self.ns}.svc.cluster.local:3306",
+            f"mycluster-0.mycluster-instances.{self.ns}.svc.cluster.local:3306")
 
         # check classic session to alternate R/W port
         self.verify_routing(
-            "mycluster.testns.svc.cluster.local:6446",
-            "mycluster-0.mycluster-instances.testns.svc.cluster.local:3306")
+            f"mycluster.{self.ns}.svc.cluster.local:6446",
+            f"mycluster-0.mycluster-instances.{self.ns}.svc.cluster.local:3306")
 
         # check classic session to R/O port
         self.verify_routing(
-            "mycluster.testns.svc.cluster.local:6447",
-            ["mycluster-1.mycluster-instances.testns.svc.cluster.local:3306",
-                "mycluster-2.mycluster-instances.testns.svc.cluster.local:3306"])
+            f"mycluster.{self.ns}.svc.cluster.local:6447",
+            [f"mycluster-1.mycluster-instances.{self.ns}.svc.cluster.local:3306",
+                f"mycluster-2.mycluster-instances.{self.ns}.svc.cluster.local:3306"])
 
         # check X session to R/W port
         self.verify_routing(
-            "mycluster.testns.svc.cluster.local:33060",
-            "mycluster-0.mycluster-instances.testns.svc.cluster.local:3306")
+            f"mycluster.{self.ns}.svc.cluster.local:33060",
+            f"mycluster-0.mycluster-instances.{self.ns}.svc.cluster.local:3306")
 
         # check X session to alternate R/W port
         self.verify_routing(
-            "mycluster.testns.svc.cluster.local:6448",
-            "mycluster-0.mycluster-instances.testns.svc.cluster.local:3306")
+            f"mycluster.{self.ns}.svc.cluster.local:6448",
+            f"mycluster-0.mycluster-instances.{self.ns}.svc.cluster.local:3306")
 
         # check X session to R/O port
         self.verify_routing(
-            "mycluster.testns.svc.cluster.local:6449",
-            ["mycluster-1.mycluster-instances.testns.svc.cluster.local:3306",
-                "mycluster-2.mycluster-instances.testns.svc.cluster.local:3306"])
+            f"mycluster.{self.ns}.svc.cluster.local:6449",
+            [f"mycluster-1.mycluster-instances.{self.ns}.svc.cluster.local:3306",
+                f"mycluster-2.mycluster-instances.{self.ns}.svc.cluster.local:3306"])
 
         kutil.delete_po("appns", "testpod")
         kutil.delete_ns("appns")
@@ -852,7 +891,7 @@ spec:
         kutil.exec(self.ns, ("mycluster-0", "sidecar"),
                    ["mysqlsh", "root:sakila@localhost", "--",
                     "cluster", "set-primary-instance",
-                    "mycluster-0.mycluster-instances.testns.svc.cluster.local:3306"])
+                    f"mycluster-0.mycluster-instances.{self.ns}.svc.cluster.local:3306"])
 
         cross_sync_gtids(
             self.ns, ["mycluster-0", "mycluster-1", "mycluster-2"],
@@ -927,7 +966,7 @@ spec:
         check_group.check_data(self, all_pods)
 
         kutil.exec(self.ns, ("mycluster-0", "sidecar"), ["mysqlsh", "root:sakila@localhost", "--", "cluster",
-                                                         "set-primary-instance", "mycluster-0.mycluster-instances.testns.svc.cluster.local:3306"])
+                                                         "set-primary-instance", f"mycluster-0.mycluster-instances.{self.ns}.svc.cluster.local:3306"])
 
     def test_4_recover_delete_and_wipe_1_of_3(self):
         # delete the pv and pvc first, which will block because until the pod
@@ -1445,6 +1484,18 @@ spec:
 
 class Cluster1CloneWorksWhenTransactionMissingFromBinlog(tutil.OperatorTest):
     default_allowed_op_errors = COMMON_OPERATOR_ERRORS
+
+    @classmethod
+    def setUpClass(cls):
+        cls.logger = logging.getLogger(__name__+":"+cls.__name__)
+        super().setUpClass()
+        g_full_log.watch_mysql_pod(cls.ns, "mycluster-0")
+
+    @classmethod
+    def tearDownClass(cls):
+        g_full_log.stop_watch(cls.ns, "mycluster-0")
+
+        super().tearDownClass()
 
     def test_0_scaling_after_removing_some_binlogs_works(self):
         """

@@ -113,7 +113,7 @@ class DistTestSuiteRunner:
 	def prepare_work_dir(self):
 		# if work dir is not explicitly pointed out, then prepare a tmp dir
 		if not self.work_dir:
-			work_dir_prefix = f"{self.tag}-{self.env_name}-"
+			work_dir_prefix = f"{self.tag}-env-{self.env_name}-"
 			self.work_dir = tempfile.mkdtemp(prefix=work_dir_prefix)
 		self.ensure_dir_exists(self.work_dir)
 
@@ -135,7 +135,7 @@ class DistTestSuiteRunner:
 		return f"{prefix}{self.tag}-{worker_index}"
 
 	def get_worker_path(self, subdir, filename):
-		return os.path.join(self.work_dir, subdir, f"{self.env_name}-{filename}")
+		return os.path.join(self.work_dir, subdir, f"{self.tag}-{filename}")
 
 	def get_worker_portion_path(self, worker_index):
 		return self.get_worker_path(self.workers_subdir, f"suite-{worker_index}.txt")
@@ -169,6 +169,8 @@ class DistTestSuiteRunner:
 		log_path = self.get_worker_log_path(worker_index)
 
 		argv = ["./run", f"--cluster={cluster}", f"--suite={portion_path}"]
+		if self.work_dir:
+			argv.append(f"--work-dir={self.work_dir}")
 		argv.extend(self.worker_argv)
 		if self.generate_xml:
 			xml_path = self.get_worker_xml_path(worker_index)
@@ -254,11 +256,9 @@ class DistTestSuiteRunner:
 		if self.perform_purge:
 			self.purge()
 
-		if result:
-			return 0
-		else:
-			return 1
+		return result
 
 
 test_suite_runner = DistTestSuiteRunner()
-test_suite_runner.run(sys.argv[1:])
+if not test_suite_runner.run(sys.argv[1:]):
+	sys.exit(6)

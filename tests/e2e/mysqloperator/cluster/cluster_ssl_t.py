@@ -8,17 +8,14 @@ from utils import tutil
 from utils import kutil
 from utils import mutil
 import logging
-from e2e.mysqloperator.cluster import check_apiobjects
-from e2e.mysqloperator.cluster import check_group
-from e2e.mysqloperator.cluster import check_adminapi
-from e2e.mysqloperator.cluster import check_routing
 from utils.tutil import g_full_log
-from setup.config import g_ts_cfg
 from utils.optesting import COMMON_OPERATOR_ERRORS
 from .cluster_t import check_all
 import os
 import configparser
 
+# force the same namespace which is hardcoded in certificates generated with tests/data/ssl/make_certs.sh
+CLUSTER_SSL_NAMESPACE = 'cluster-ssl'
 
 def check_verify_ca(self, ns, pod, port, ca, expected_host):
     try:
@@ -155,7 +152,7 @@ class ClusterSSL(tutil.OperatorTest):
     @classmethod
     def setUpClass(cls):
         cls.logger = logging.getLogger(__name__+":"+cls.__name__)
-        super().setUpClass()
+        super().setUpClass(CLUSTER_SSL_NAMESPACE)
 
         g_full_log.watch_mysql_pod(cls.ns, "mycluster-0")
         g_full_log.watch_mysql_pod(cls.ns, "mycluster-1")
@@ -201,12 +198,28 @@ spec:
 
         kutil.apply(self.ns, yaml)
 
+        self.wait_pod("mycluster-0", "Pending")
+
+        # The deployment starts with one RS and zero routers, which are updated once the IC is up and running
+        router_rs_pre = kutil.ls_rs(self.ns, pattern="mycluster-router-.*")
+        self.assertEqual(len(router_rs_pre), 1)
+        self.assertEqual(router_rs_pre[0]['DESIRED'], '0')
+        self.assertEqual(router_rs_pre[0]['CURRENT'], '0')
+        self.assertEqual(router_rs_pre[0]['READY'], '0')
+
         self.wait_pod("mycluster-0", "Running")
         self.wait_pod("mycluster-1", "Running")
 
         self.wait_ic("mycluster", "ONLINE", 2)
 
         self.wait_routers("mycluster-router-.*", 1)
+
+        router_rs_post = kutil.ls_rs(self.ns, pattern="mycluster-router-.*")
+        self.assertEqual(len(router_rs_post), 1)
+        self.assertEqual(router_rs_post[0]['NAME'], router_rs_pre[0]['NAME'])
+        self.assertEqual(router_rs_post[0]['DESIRED'], '1')
+        self.assertEqual(router_rs_post[0]['CURRENT'], '1')
+        self.assertEqual(router_rs_post[0]['READY'], '1')
 
         with mutil.MySQLPodSession(self.ns, "mycluster-0", "root", "sakila") as s:
             s.exec_sql("set global max_connect_errors=10000")
@@ -349,7 +362,7 @@ class ClusterNoSSL(tutil.OperatorTest):
     @classmethod
     def setUpClass(cls):
         cls.logger = logging.getLogger(__name__+":"+cls.__name__)
-        super().setUpClass()
+        super().setUpClass(CLUSTER_SSL_NAMESPACE)
 
         g_full_log.watch_mysql_pod(cls.ns, "mycluster-0")
 
@@ -448,7 +461,7 @@ class ClusterAddSSL(tutil.OperatorTest):
     @classmethod
     def setUpClass(cls):
         cls.logger = logging.getLogger(__name__+":"+cls.__name__)
-        super().setUpClass()
+        super().setUpClass(CLUSTER_SSL_NAMESPACE)
 
         g_full_log.watch_mysql_pod(cls.ns, "mycluster-0")
         g_full_log.watch_mysql_pod(cls.ns, "mycluster-1")
@@ -543,7 +556,7 @@ class ClusterRouterSSL(tutil.OperatorTest):
     @classmethod
     def setUpClass(cls):
         cls.logger = logging.getLogger(__name__+":"+cls.__name__)
-        super().setUpClass()
+        super().setUpClass(CLUSTER_SSL_NAMESPACE)
 
         g_full_log.watch_mysql_pod(cls.ns, "mycluster-0")
 

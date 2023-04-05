@@ -41,6 +41,9 @@ class AuditLogClusterIncomplete(AuditLogBase):
         with mutil.MySQLPodSession(self.ns, "mycluster-2", self.user, self.password) as s:
             res = s.query_sql("SHOW DATABASES").fetch_all()
             self.assertIsNotNone(res)
+            s.exec_sql(f'FLUSH TABLES')
+
+        self.rotate_log(self.instance_primary)
 
 
     def test_3_verify_log(self):
@@ -49,18 +52,22 @@ class AuditLogClusterIncomplete(AuditLogBase):
         self.assertFalse(self.does_log_exist("mycluster-2"))
 
         self.assertTrue(self.has_default_filter_set("mycluster-0"))
-        log_data_0 = self.get_log_data(self.instance_primary, self.add_data_timestamp)
-        self.assertIn("CREATE SCHEMA audit_foo", log_data_0)
-        self.assertIn(f"CREATE TABLE audit_foo.{self.test_table} (id INT NOT NULL)", log_data_0)
-        self.assertNotIn("SHOW TABLES", log_data_0)
-        self.assertNotIn("SHOW DATABASES", log_data_0)
+        samples = [
+            ("CREATE SCHEMA audit_foo", True),
+            (f"CREATE TABLE audit_foo.{self.test_table} (id INT NOT NULL)", True),
+            ("SHOW TABLES", False),
+            ("SHOW DATABASES", False)
+            ]
+        self.assertIsNone(self.verify_log_data(self.instance_primary, self.add_data_timestamp, samples))
 
         self.assertTrue(self.has_default_filter_set("mycluster-1"))
-        log_data_1 = self.get_log_data("mycluster-1", self.add_data_timestamp)
-        self.assertNotIn("CREATE SCHEMA audit_foo", log_data_1)
-        self.assertNotIn(f"CREATE TABLE audit_foo.{self.test_table} (id INT NOT NULL)", log_data_1)
-        self.assertIn("SHOW TABLES", log_data_1)
-        self.assertNotIn("SHOW DATABASES", log_data_1)
+        samples = [
+            ("CREATE SCHEMA audit_foo", False),
+            (f"CREATE TABLE audit_foo.{self.test_table} (id INT NOT NULL)", False),
+            ("SHOW TABLES", True),
+            ("SHOW DATABASES", False)
+            ]
+        self.assertIsNone(self.verify_log_data("mycluster-1", self.add_data_timestamp, samples))
 
         self.assertTrue(self.has_default_filter_set("mycluster-2"))
 

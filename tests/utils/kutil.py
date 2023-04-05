@@ -16,6 +16,7 @@ import re
 import yaml
 import base64
 import pathlib
+import json
 from setup.config import g_ts_cfg
 
 logger = logging.getLogger("kutil")
@@ -103,9 +104,9 @@ def get_current_context():
     if ret.returncode == 0:
         return output.strip()
 
-    raise Exception(f"Could not get current context {err}")
+    raise Exception(f"Could not get current context {ret}")
 
-def kubectl(cmd, rsrc=None, args=None, timeout=None, check=True, ignore=[]):
+def kubectl(cmd, rsrc=None, args=None, timeout=None, check=True, ignore=[], timeout_diagnostics=None):
     argv = ["kubectl", f"--context={g_ts_cfg.k8s_context}", cmd]
     if rsrc:
         argv.append(rsrc)
@@ -116,6 +117,12 @@ def kubectl(cmd, rsrc=None, args=None, timeout=None, check=True, ignore=[]):
     try:
         r = subprocess.run(argv, timeout=timeout,
                            check=check, capture_output=True)
+    except subprocess.TimeoutExpired as e:
+        logger.error("kubectl failed: %s:\n    stderr=%s\n    stdout=%s",
+                        e, decode_stream(e.stderr), decode_stream(e.stdout))
+        if timeout_diagnostics:
+            timeout_diagnostics()
+        raise
     except subprocess.CalledProcessError as e:
         for ig in ignore:
             if "(%s)" % ig in e.stderr.decode("utf8"):
@@ -188,6 +195,7 @@ def watch(ns, rsrc, name, fn, timeout, format=None):
     if not found:
         logger.error(
             f"Timeout waiting for condition in {rsrc} {ns}/{name}. output={output}")
+        store_diagnostics(ns, rsrc, name)
 
     if debug_kubectl:
         logger.debug("rc = %s, stdout = %s", p.returncode, output)
@@ -209,12 +217,22 @@ def feed_kubectl(input, cmd, rsrc=None, args=None, check=True):
     r = subprocess.run(argv, input=input.encode("utf8"),
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                        check=check)
-    print(r.stdout.decode("utf8"))
+    logger.info(r.stdout.decode("utf8"))
     if debug_kubectl:
         logger.debug("rc = %s", r)
     return r
 
-#
+
+def server_version() -> str:
+    output = kubectl("version", args=["-o", "json"])
+    sv = json.loads(output.stdout.decode("utf8"))['serverVersion']
+    return f"{sv['major']}.{sv['minor']}"
+
+
+def client_version() -> str:
+    output = kubectl("version", args=["-o", "json"])
+    cv = json.loads(output.stdout.decode("utf8"))['clientVersion']
+    return f"{cv['major']}.{cv['minor']}"
 
 
 def __ls(ns, rsrc, ignore=[]):
@@ -233,8 +251,10 @@ def ls_sts(ns):
     return __ls(ns, "sts")
 
 
-def ls_rs(ns):
-    return __ls(ns, "rs")
+def ls_rs(ns, *, pattern=".*"):
+    rss = __ls(ns, "rs")
+    r = re.compile(pattern)
+    return [rs for rs in rss if r.match(rs["NAME"])]
 
 
 def ls_deploy(ns):
@@ -376,22 +396,21 @@ def get_po_ev(ns, name, *, after=None, fields=None):
 
 #
 
-
-def describe_po(ns, name, jpath=None):
-    r = kubectl("describe", "po", [name, "-n", ns])
+def describe_rsrc(ns, rsrc, name, jpath=None):
+    r = kubectl("describe", rsrc, [name, "-n", ns])
     if r.stdout:
         return r.stdout.decode("utf8")
     raise Exception(f"Error for describe {ns}/{name}")
+
+
+def describe_po(ns, name, jpath=None):
+    return describe_rsrc(ns, "po", name, jpath)
 
 
 def describe_ic(ns, name):
-    r = kubectl("describe", "ic", [name, "-n", ns])
-    if r.stdout:
-        return r.stdout.decode("utf8")
-    raise Exception(f"Error for describe {ns}/{name}")
+    return describe_rsrc(ns, "ic", name)
 
 #
-
 
 def delete(ns, rsrc, name, timeout, wait=True):
     if not name:
@@ -401,7 +420,8 @@ def delete(ns, rsrc, name, timeout, wait=True):
         args += ["-n", ns]
     if not wait:
         args += ["--wait=false"]
-    kubectl("delete", rsrc, [name] + args, timeout=timeout, ignore=["NotFound"])
+
+    kubectl("delete", rsrc, [name] + args, timeout=timeout, ignore=["NotFound"], timeout_diagnostics=lambda: store_diagnostics(ns, rsrc, name))
 
 
 def delete_ic(ns, name, timeout=300):
@@ -577,8 +597,137 @@ def drain_node(node):
 
 #
 
+class StoreDiagnostics:
+    def __init__(self, ns):
+        self.ns = ns
+        self.work_dir = None
 
-def wait_pod_exists(ns, name, timeout=120, checkabort=lambda: None):
+
+    def get_work_dir(self):
+        work_dir = os.path.join(g_ts_cfg.work_dir, 'diagnostics', g_ts_cfg.k8s_context, self.ns)
+        if not os.path.exists(work_dir):
+            return work_dir
+
+        index = 0
+        while True:
+            diag_dir_index = work_dir + str(index)
+            if not os.path.exists(diag_dir_index):
+                return diag_dir_index
+            index += 1
+
+    def create_work_dir(self):
+        self.work_dir = self.get_work_dir()
+        os.makedirs(self.work_dir)
+
+
+    def store_log(self, rsrc, item_name, kind_of_log, generate_contents):
+        log_fname = f"{item_name}-{kind_of_log}-{rsrc}.log"
+        log_path = os.path.join(self.work_dir, log_fname)
+        try:
+            contents = generate_contents()
+            with open(log_path, 'w') as f:
+                f.write(contents)
+        except BaseException as err:
+            logger.error(f"error while storing '{kind_of_log}' diagnostics for {rsrc} {self.ns}/{item_name}: {err}")
+
+    def describe_rsrc(self, rsrc, name):
+        self.store_log(rsrc, name, "describe", lambda: describe_rsrc(self.ns, rsrc, name))
+
+    def describe_ic(self, ic):
+        self.store_log("ic", ic, "describe", lambda: describe_ic(self.ns, ic))
+
+    def describe_pod(self, pod):
+        self.store_log("pod", pod, "describe", lambda: describe_po(self.ns, pod))
+
+    def logs_pod(self, pod, container):
+        self.store_log("pod", f"{pod}-{container}", "logs", lambda: logs(self.ns, [pod, container]))
+
+
+    def process_cluster(self, cluster_name):
+        self.process_ic(cluster_name)
+        self.process_pods(cluster_name)
+        self.process_routers(cluster_name)
+        self.describe_ic(cluster_name)
+
+    def process_ic(self, cluster_name):
+        self.describe_ic(cluster_name)
+
+    def process_pod(self, pod):
+        self.describe_pod(pod)
+        self.logs_pod(pod, "initconf")
+        self.logs_pod(pod, "initmysql")
+        self.logs_pod(pod, "sidecar")
+        self.logs_pod(pod, "mysql")
+
+    def process_pods(self, cluster_name):
+        pods = ls_pod(self.ns, f"{cluster_name}-.*")
+        for pod in pods:
+            self.process_pod(pod["NAME"])
+
+    def process_router(self, router):
+        self.describe_pod(router)
+        self.logs_pod(router, "router")
+
+    def process_routers(self, cluster_name):
+        routers = ls_pod(self.ns, f"{cluster_name}-router-.*")
+        for router in routers:
+            self.process_router(router["NAME"])
+
+
+    def process_generic_rsrc(self, rsrc, name):
+        self.describe_rsrc(rsrc, name)
+        ics = ls_ic(self.ns)
+        for ic in ics:
+            self.process_cluster(ic["NAME"])
+
+
+    def extract_cluster_name_from_pod(self, base_name):
+        separator = base_name.rfind('-')
+        if separator == -1:
+            return base_name
+        return base_name[:separator]
+
+    def extract_cluster_name_from_routers_pattern(self, routers_name_pattern):
+        separator = routers_name_pattern.rfind('-router-')
+        if separator == -1:
+            return routers_name_pattern
+        return routers_name_pattern[:separator]
+
+    def run(self, rsrc, name):
+        self.create_work_dir()
+        logger.info(f"storing diagnostics for {rsrc} {self.ns}/{name} into {self.work_dir} ...")
+
+        if rsrc == "ic":
+            self.process_cluster(name)
+        elif rsrc == "po" or rsrc == "pod":
+            cluster_name = self.extract_cluster_name_from_pod(name)
+            self.process_cluster(cluster_name)
+        elif rsrc == "router":
+            cluster_name = self.extract_cluster_name_from_routers_pattern(name)
+            self.process_cluster(cluster_name)
+        else:
+            self.process_generic_rsrc(rsrc, name)
+
+        logger.info(f"storing diagnostics for {rsrc} {self.ns}/{name} completed")
+
+
+def store_diagnostics(ns, rsrc, name):
+    if name and name[0].isalpha():
+        sd = StoreDiagnostics(ns)
+        sd.run(rsrc, name)
+
+def store_pod_diagnostics(ns, name):
+    store_diagnostics(ns, "pod", name)
+
+def store_routers_diagnostics(ns, name_pattern):
+    store_diagnostics(ns, "router", name_pattern)
+
+def store_ic_diagnostics(ns, name):
+    store_diagnostics(ns, "ic", name)
+
+#
+
+def wait_pod_exists(ns, name, timeout=150, checkabort=lambda: None):
     logger.info(f"Waiting for pod {ns}/{name} to come up")
     for i in range(timeout):
         pods = ls_po(ns)
@@ -591,6 +740,7 @@ def wait_pod_exists(ns, name, timeout=120, checkabort=lambda: None):
     logger.info("%s", kubectl("get", "pod", args=[
                 "-n", ns]).stdout.decode("utf8"))
 
+    store_pod_diagnostics(ns, name)
     raise Exception(f"Timeout waiting for pod {ns}/{name}")
 
 
@@ -617,10 +767,11 @@ def wait_pod_gone(ns, name, timeout=120, checkabort=lambda: None):
     logger.info("%s", kubectl("get", "pod", args=[
                 "-n", ns]).stdout.decode("utf8"))
 
+    store_pod_diagnostics(ns, name)
     raise Exception(f"Timeout waiting for pod {ns}/{name}")
 
 
-def wait_pod(ns, name, status="Running", timeout=120, checkabort=lambda: None):
+def wait_pod(ns, name, status="Running", timeout=150, checkabort=lambda: None):
     if type(status) not in (tuple, list):
         status = [status]
 
@@ -628,8 +779,9 @@ def wait_pod(ns, name, status="Running", timeout=120, checkabort=lambda: None):
         checkabort()
         logger.debug("%s", line)
         if line["STATUS"] in ("Error", "ImagePullBackOff", "ErrImageNeverPull", "CrashLoopBackOff") and line["STATUS"] not in status:
+            store_pod_diagnostics(ns, name)
             raise Exception(f"Pod error: {line['STATUS']}")
-        print(line)
+        logger.debug(line)
         return line["STATUS"] in status
 
     wait_pod_exists(ns, name, timeout, checkabort)
@@ -659,10 +811,11 @@ def wait_ic_exists(ns, name, timeout=60, checkabort=lambda: None):
     logger.info("%s", kubectl("get", "ic", args=[
                 "-n", ns]).stdout.decode("utf8"))
 
+    store_ic_diagnostics(ns, name)
     raise Exception(f"Timeout waiting for ic {ns}/{name}")
 
 
-def wait_ic_gone(ns, name, timeout=120, checkabort=lambda: None):
+def wait_ic_gone(ns, name, timeout=150, checkabort=lambda: None):
     logger.info(f"Waiting for ic {ns}/{name} to disappear")
     last_state = None
     i = 0
@@ -686,6 +839,7 @@ def wait_ic_gone(ns, name, timeout=120, checkabort=lambda: None):
     logger.info("%s", kubectl("get", "ic", args=[
                 "-n", ns]).stdout.decode("utf8"))
 
+    store_ic_diagnostics(ns, name)
     raise Exception(f"Timeout waiting for ic {ns}/{name}")
 
 
@@ -721,6 +875,7 @@ def portfw(ns, name, in_port):
     p = kubectl_popen("port-forward", ["pod/%s" % name, ":%s" %
                                        in_port, "--address", "127.0.0.1", "-n", ns])
     line = p.stdout.readline().decode("utf8")
+    logger.info(f"portfw: {line}")
     return p, int(line.split("->")[0].split(":")[-1].strip())
 
 #
@@ -820,6 +975,13 @@ def create_ssl_cert_secret(ns, name, cert_path, key_path):
     kubectl("create", "secret", options)
 
 
+def create_generic_secret(ns, name, key_path, local_key_path):
+    options = [ "generic", name, "-n", ns]
+    options.append(f"--from-file={key_path}={local_key_path}")
+
+    kubectl("create", "secret", options)
+
+
 def create_user_secrets(ns, name, root_user=None, root_host=None, root_pass=None, extra_keys=[]):
     data = []
     if root_user is not None:
@@ -860,5 +1022,5 @@ mysql-operator   mysql-operator-5bfb6dfdb7-mj5tx          1/1     Running      0
     splitter = TableSplitter(lines[0])
     for l in lines[1:]:
         p = splitter.split(l)
-        print(p)
+        logger.debug(p)
         assert len(p) == len(splitter.columns)

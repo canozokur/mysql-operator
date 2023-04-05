@@ -56,6 +56,9 @@ class AuditLogRemoveFilter(AuditLogBase):
         with mutil.MySQLPodSession(self.ns, "mycluster-2", self.user, self.password) as s:
             res = s.query_sql("SHOW SCHEMAS").fetch_all()
             self.assertIsNotNone(res)
+            s.exec_sql("FLUSH TABLES")
+
+        self.rotate_log(self.instance_primary)
 
 
     def test_6_verify_logs(self):
@@ -64,14 +67,20 @@ class AuditLogRemoveFilter(AuditLogBase):
         self.assertTrue(self.does_log_exist("mycluster-2"))
 
         # TODO: uncomment after audit log for clusters will have fixed
-        # log_data_0 = self.get_log_data("mycluster-0", self.add_data_timestamp)
-        # self.assertNotIn("CREATE DATABASE audit_foo", log_data_0)
+        # samples = [
+        #     ("CREATE DATABASE audit_foo", False)
+        #     ]
+        # self.assertIsNone(self.verify_log_data("mycluster-0", self.add_data_timestamp, samples))
 
-        # log_data_1 = self.get_log_data("mycluster-1", self.add_data_timestamp)
-        # self.assertNotIn("SHOW PLUGINS", log_data_1)
+        # samples = [
+        #     ("SHOW PLUGINS", False)
+        #     ]
+        # self.assertIsNone(self.verify_log_data("mycluster-1", self.add_data_timestamp, samples))
 
-        # log_data_2 = self.get_log_data("mycluster-2", self.add_data_timestamp)
-        # self.assertNotIn("SHOW SCHEMAS", log_data_2)
+        # samples = [
+        #     ("SHOW SCHEMAS", False)
+        #     ]
+        # self.assertIsNone(self.verify_log_data("mycluster-2", self.add_data_timestamp, samples))
 
 
     def test_9_destroy(self):

@@ -6,10 +6,7 @@
 # generic script intended for building dev images
 set -vx
 
-source $WORKSPACE/tests/ci/jobs/auxiliary/set-env.sh
-
-OPERATOR_BASE_VERSION_TAG=$(grep -m 1 OPERATOR_TEST_VERSION_TAG $WORKSPACE/tests/setup/defaults.py \
-	| sed 's/[[:blank:]]*"OPERATOR_TEST_VERSION_TAG", default="\([0-9.-]*\)")/\1/')
+source $WORKSPACE/tests/ci/jobs/auxiliary/set-env.sh || return
 
 DEV_IMAGE_DOCKERFILE=$CI_DIR/registry/dev/Dockerfile
 
@@ -21,16 +18,17 @@ BASE_IMAGE_COMMUNITY=$LOCAL_REGISTRY_ADDRESS/$LOCAL_REPOSITORY_NAME/mysql-operat
 docker build -f $DEV_IMAGE_DOCKERFILE \
 	-t $LOCAL_REGISTRY_OPERATOR_IMAGE \
 	--build-arg BASE_IMAGE=$BASE_IMAGE_COMMUNITY .
+if [ $? -ne 0 ]; then
+	echo "cannot build dev-image ${LOCAL_REGISTRY_OPERATOR_IMAGE} from ${BASE_IMAGE_COMMUNITY}"
+	exit 1
+fi
 docker push ${LOCAL_REGISTRY_OPERATOR_IMAGE}
 
 # enterprise
 $CI_DIR/registry/build-enterprise-image.sh $LOCAL_REGISTRY_OPERATOR_IMAGE $LOCAL_REGISTRY_ENTERPRISE_OPERATOR_IMAGE
+if [ $? -ne 0 ]; then
+	exit $?
+fi
 docker push ${LOCAL_REGISTRY_ENTERPRISE_OPERATOR_IMAGE}
-
-# BASE_IMAGE_ENTERPRISE=$LOCAL_REGISTRY_ADDRESS/$LOCAL_REPOSITORY_NAME/enterprise-operator:$OPERATOR_BASE_VERSION_TAG
-# docker build -f $DEV_IMAGE_DOCKERFILE \
-# 	-t $LOCAL_REGISTRY_ENTERPRISE_OPERATOR_IMAGE \
-# 	--build-arg BASE_IMAGE=$BASE_IMAGE_ENTERPRISE .
-# docker push ${LOCAL_REGISTRY_ENTERPRISE_OPERATOR_IMAGE}
 
 docker images --digests
